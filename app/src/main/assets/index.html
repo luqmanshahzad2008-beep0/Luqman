@@ -450,7 +450,9 @@ const MOVE_RAIL_SPEED_SLOW = 1.1;       // Slow gentle sine motion (Stage 4)
 const MOVE_RAIL_SPEED_FAST = 2.2;       // Faster moving rails (Stage 7)
 
 const START_ROAD_START = -100, START_ROAD_END = 500;
-const TUNNEL_START_X = START_ROAD_END;
+const START_OPEN_GAP = 350; // Distance between starting road end and first spikes as requested
+const TUNNEL_START_X = START_ROAD_END + START_OPEN_GAP;
+const BOT_SPIKES_LOWER_OFFSET = 60; // Lower bottom spikes so they are clearly below the road level as requested
 
 // Dynamic level stage length
 const LEVEL_BASE_WIDTHS = 14;
@@ -466,10 +468,10 @@ function getTunnelLength(lvl) {
 
 let TUNNEL_LENGTH = getTunnelLength(1);
 let TUNNEL_END_X = TUNNEL_START_X + TUNNEL_LENGTH;
-const CALM_OPEN_GAP = 300;
+const CALM_OPEN_GAP = 850; // Increased distance between tunnel exit and finish road as requested
 
 // Long finish road, checkered finish line, and stopping constants
-const FINISH_ROAD_LENGTH = 1.3 * W;
+const FINISH_ROAD_LENGTH = 2.8 * W; // Enlarged, much longer finish road as requested
 const FINISH_LINE_AT = 0.85;
 const STOP_TIME = 1.2;
 
@@ -4094,13 +4096,16 @@ function generateLevelCoins(lvl, segsList) {
     });
   }
 
-  // 1. START GUIDE: 5 bronze coins in gentle arc leading into tunnel
-  const startX = START_ROAD_START + (START_ROAD_END - START_ROAD_START) * 0.60;
+  // 1. START GUIDE: bronze coins in gentle arc leading off start road through open gap into tunnel
+  const startX = START_ROAD_END - 40;
   const firstSegBounds = getCorridorSafeBounds(TUNNEL_START_X + 60, segsList);
   const targetEntryY = firstSegBounds.safeCenter;
-  for (let k = 0; k < 5; k++) {
-    const t = k / 4;
-    const x = startX + k * coinSpacing;
+  const numGuideCoins = 7;
+  const guideEnd = TUNNEL_START_X + 40;
+  const guideStep = (guideEnd - startX) / (numGuideCoins - 1);
+  for (let k = 0; k < numGuideCoins; k++) {
+    const t = k / (numGuideCoins - 1);
+    const x = startX + k * guideStep;
     const y = CAR_REST_Y - (CAR_REST_Y - targetEntryY) * Math.sin(t * Math.PI * 0.5);
     pushCoin(x, y, 'bronze', prng() * 6.28);
   }
@@ -4219,13 +4224,14 @@ function generateLevelCoins(lvl, segsList) {
     curX += patternLen + (gapSec * sp);
   }
 
-  // 3. FINISH ROAD: 10 straight coins along asphalt (9 bronze, final coin at finish line is silver)
+  // 3. FINISH ROAD: Reduced number of coins as requested (reduced to 3 coins)
   const finishCoinY = CAR_REST_Y - BRONZE_RADIUS - 2;
-  const finishCoinsStart = FINISH_ROAD_X + 50;
-  const finishCoinsEnd = finishLineWorldX - 50;
-  const finishCoinStep = (finishCoinsEnd - finishCoinsStart) / 9;
-  for (let k = 0; k < 10; k++) {
-    const isLast = (k === 9);
+  const finishCoinsStart = FINISH_ROAD_X + 140;
+  const finishCoinsEnd = finishLineWorldX - 80;
+  const finishCoinCount = 3;
+  const finishCoinStep = (finishCoinsEnd - finishCoinsStart) / (finishCoinCount - 1);
+  for (let k = 0; k < finishCoinCount; k++) {
+    const isLast = (k === finishCoinCount - 1);
     pushCoin(finishCoinsStart + k * finishCoinStep, finishCoinY, isLast ? 'silver' : 'bronze', prng() * 6.28);
   }
 
@@ -4874,6 +4880,154 @@ let segs = [], nextX = 0, lastC = H / 2, parts = [], deadAt = 0, last = 0;
 let best = 0;
 let wheelRot = 0;
 
+let levelTransitionInitialized = false;
+
+function startLevelWithTransition(lvl) {
+  curLevel = lvl || curLevel;
+  st = 'transition';
+  transitionTimer = 0;
+  levelTransitionInitialized = false;
+  hold = false;
+  thrust = 0;
+  levelRunTimer = 0;
+  displayedSpeedKmH = 0;
+  playClickSound();
+  playLaunchSpinSound();
+}
+
+function drawStylishLevelTransition(t) {
+  const W_TOTAL = W + 60;
+
+  // A. Cinematic Blackout Curtain & Scroll Reveal (ساری سکرین بلیک ہو کے، ایسے سکرول ہو کے)
+  if (t < 0.45) {
+    const wipeIn = Math.min(1.0, t / 0.35);
+    const easeIn = wipeIn * wipeIn;
+    const curtainW = easeIn * W_TOTAL;
+
+    ctx.save();
+    ctx.fillStyle = '#050811';
+    ctx.fillRect(0, 0, curtainW, H);
+
+    if (curtainW > 0 && curtainW < W_TOTAL) {
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = '#00f2fe';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.moveTo(curtainW, 0);
+      ctx.lineTo(curtainW, H);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+      ctx.lineWidth = 2.0;
+      for (let i = 0; i < 5; i++) {
+        const yPos = H * (0.2 + i * 0.15);
+        const len = 35 + i * 15;
+        ctx.beginPath();
+        ctx.moveTo(Math.max(0, curtainW - len), yPos);
+        ctx.lineTo(curtainW, yPos);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  } else if (t >= 0.45 && t < 1.25) {
+    const wipeOut = Math.min(1.0, (t - 0.45) / 0.60);
+    const easeOut = wipeOut * wipeOut * (3 - 2 * wipeOut);
+    const openX = easeOut * W_TOTAL;
+
+    ctx.save();
+    if (openX < W) {
+      ctx.fillStyle = '#050811';
+      ctx.fillRect(openX, 0, W - openX, H);
+
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.moveTo(openX, 0);
+      ctx.lineTo(openX, H);
+      ctx.stroke();
+
+      const flareY = H * 0.5 + Math.sin(t * 12) * 50;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.beginPath();
+      ctx.arc(openX, flareY, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // B. Futuristic Cyber Level Start Card (سٹائلش طریقے سے لیول شروع ہو)
+  if (t >= 0.35 && t <= 1.70) {
+    let cardAlpha = 1.0;
+    if (t < 0.65) {
+      cardAlpha = (t - 0.35) / 0.30;
+    } else if (t > 1.40) {
+      cardAlpha = Math.max(0, 1.0 - (t - 1.40) / 0.30);
+    }
+
+    let scale = 1.0;
+    if (t < 0.65) {
+      const enterP = (t - 0.35) / 0.30;
+      scale = 0.85 + 0.15 * Math.sin(enterP * Math.PI * 0.5);
+    } else if (t > 1.40) {
+      const exitP = (t - 1.40) / 0.30;
+      scale = 1.0 + 0.08 * exitP;
+    }
+
+    const cardW = 280;
+    const cardH = 88;
+    const cardCX = W / 2;
+    const cardCY = H * 0.38;
+
+    ctx.save();
+    ctx.globalAlpha = cardAlpha;
+    ctx.translate(cardCX, cardCY);
+    ctx.scale(scale, scale);
+
+    ctx.fillStyle = 'rgba(8, 12, 22, 0.90)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+    ctx.shadowBlur = 18;
+    roundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, 16);
+    ctx.fill();
+
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2.2;
+    ctx.shadowColor = '#0284c7';
+    ctx.shadowBlur = 10;
+    roundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, 16);
+    ctx.stroke();
+
+    ctx.fillStyle = '#67e8f9';
+    const nw = 8, nh = 2.5;
+    ctx.fillRect(-cardW / 2 + 10, -cardH / 2 + 2, nw, nh);
+    ctx.fillRect(cardW / 2 - 10 - nw, -cardH / 2 + 2, nw, nh);
+    ctx.fillRect(-cardW / 2 + 10, cardH / 2 - 2 - nh, nw, nh);
+    ctx.fillRect(cardW / 2 - 10 - nw, cardH / 2 - 2 - nh, nw, nh);
+
+    const stageNum = getStageNumber(curLevel);
+    ctx.font = '800 11px "Lilita One", "Baloo 2", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#facc15';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowBlur = 4;
+    ctx.fillText(`★ STAGE ${stageNum} ★`, 0, -cardH / 2 + 16);
+
+    drawGlossyText(`LEVEL ${curLevel}`, 0, -2, 28, 'center', '#ffffff', '#0f172a', 6.0);
+
+    const pulseChevron = Math.sin(t * 14) * 0.3 + 0.7;
+    ctx.font = '800 12px "Lilita One", "Baloo 2", sans-serif';
+    ctx.fillStyle = `rgba(56, 189, 248, ${pulseChevron})`;
+    ctx.shadowColor = '#38bdf8';
+    ctx.shadowBlur = 6;
+    ctx.fillText('>> READY... GO! >>', 0, cardH / 2 - 16);
+
+    ctx.restore();
+  }
+}
+
 let transitionTimer = 0;
 let nextLevelTarget = 1;
 const TITLE_CARD_DURATION = 1.75;
@@ -5251,7 +5405,7 @@ function addSeg(isOpen = false, forceLen) {
   // - Gap edges must stay at least 0.12 * H away from the top HUD area: c - gap/2 >= 0.12 * H
   // - Gap edges must stay at least 0.20 * H above the bottom of the screen: c + gap/2 <= 0.80 * H
   const bandMinC = Math.max(TUNNEL_CENTER_MIN * H, gap / 2 + 0.12 * H);
-  const bandMaxC = Math.min(TUNNEL_CENTER_MAX * H, H * 0.80 - gap / 2);
+  const bandMaxC = Math.min(TUNNEL_CENTER_MAX * H, H * 0.88 - (gap / 2 + BOT_SPIKES_LOWER_OFFSET));
   const safeMinC = Math.min(bandMinC, bandMaxC);
   const safeMaxC = Math.max(bandMinC, bandMaxC);
   const targetStartCenter = TUNNEL_START_CENTER * H;
@@ -5293,7 +5447,7 @@ function addSeg(isOpen = false, forceLen) {
   }
 
   const top = isOpen ? -300 : (c - gap / 2);
-  const bot = isOpen ? (H + 300) : (c + gap / 2);
+  const bot = isOpen ? (H + 300) : (c + gap / 2 + BOT_SPIKES_LOWER_OFFSET);
 
   const segProg = (nextX - CAR_X) / LEVEL_LENGTH;
   const noSpikes = isOpen || (segProg >= 0.95) || (nextX >= TUNNEL_END_X);
@@ -6488,11 +6642,7 @@ function advanceToNextLevel() {
   const nextLvl = (levelJustCleared ? levelJustCleared + 1 : curLevel + 1);
   curLevel = nextLvl;
   saveProgress(curLevel, Math.max(highestLevel, curLevel), best);
-  startLevel(curLevel);
-  st = 'transition';
-  transitionTimer = 0;
-  hold = false;
-  thrust = 0;
+  startLevelWithTransition(curLevel);
 }
 
 function resetGame() {
@@ -6930,40 +7080,39 @@ function drawRoadPlatform(startX, endX, roadTop, isFinish = false) {
       ctx.fillRect(flX + stripW / 2, roadTop, 1.5, bandH);
       ctx.restore();
 
-      // 2. Two Finish Flags placed on sides of the finish line
-      for (const side of [-1, 1]) {
-        const poleX = flX + side * 15;
-        const poleBaseY = roadTop + 2;
-        const poleTopY = roadTop - 50;
+      // 2. Single Finish Flag on the finish line (one standing figure removed as requested)
+      const side = 1;
+      const poleX = flX + side * 15;
+      const poleBaseY = roadTop + 2;
+      const poleTopY = roadTop - 50;
 
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-        ctx.beginPath();
-        ctx.ellipse(poleX + 1, poleBaseY, 5, 2, 0, 0, 6.28);
-        ctx.fill();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.beginPath();
+      ctx.ellipse(poleX + 1, poleBaseY, 5, 2, 0, 0, 6.28);
+      ctx.fill();
 
-        // Silver pole
-        ctx.fillStyle = '#cbd5e1';
-        ctx.fillRect(poleX - 1.5, poleTopY, 3, poleBaseY - poleTopY);
+      // Silver pole
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(poleX - 1.5, poleTopY, 3, poleBaseY - poleTopY);
 
-        // Gold finial sphere
-        ctx.fillStyle = '#facc15';
-        ctx.beginPath();
-        ctx.arc(poleX, poleTopY, 4, 0, 6.28);
-        ctx.fill();
+      // Gold finial sphere
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.arc(poleX, poleTopY, 4, 0, 6.28);
+      ctx.fill();
 
-        // Waving checkered flag
-        const flagW = 22 * side;
-        const flagTop = poleTopY + 2;
-        const flagH = 22;
-        const fRows = 3, fCols = 3;
-        const fSqW = flagW / fCols;
-        const fSqH = flagH / fRows;
-        for (let fc = 0; fc < fCols; fc++) {
-          for (let fr = 0; fr < fRows; fr++) {
-            const wave = Math.sin(fc * 0.8 + gameTime * 6) * 2;
-            ctx.fillStyle = ((fc + fr) % 2 === 0) ? '#ffffff' : '#0f172a';
-            ctx.fillRect(poleX + fc * fSqW, flagTop + fr * fSqH + wave, fSqW, fSqH);
-          }
+      // Waving checkered flag
+      const flagW = 22 * side;
+      const flagTop = poleTopY + 2;
+      const flagH = 22;
+      const fRows = 3, fCols = 3;
+      const fSqW = flagW / fCols;
+      const fSqH = flagH / fRows;
+      for (let fc = 0; fc < fCols; fc++) {
+        for (let fr = 0; fr < fRows; fr++) {
+          const wave = Math.sin(fc * 0.8 + gameTime * 6) * 2;
+          ctx.fillStyle = ((fc + fr) % 2 === 0) ? '#ffffff' : '#0f172a';
+          ctx.fillRect(poleX + fc * fSqW, flagTop + fr * fSqH + wave, fSqW, fSqH);
         }
       }
     }
@@ -8495,19 +8644,38 @@ function step(dt) {
     cy = CAR_REST_Y;
     vy = 0;
     thrust = 0;
-    cam = 0;
     levelRunTimer = 0;
+
+    // At t >= 0.35s (peak blackout), initialize the level so track is prepared behind curtain
+    if (transitionTimer >= 0.35 && !levelTransitionInitialized) {
+      startLevel(curLevel);
+      levelTransitionInitialized = true;
+    }
+
+    // Camera scrolls into position: pans smoothly forward onto starting road!
+    if (transitionTimer >= 0.35) {
+      const scrollT = Math.min(1.0, (transitionTimer - 0.35) / 0.85);
+      const easeScroll = 1 - Math.pow(1 - scrollT, 3);
+      cam = (1 - easeScroll) * -140; // Pans forward from -140px to 0px
+    } else {
+      cam = -140;
+    }
+
     const wheelRadiusPx = CAR_DRAW_W * WHEEL_RADIUS;
-    if (wheelRadiusPx > 0) {
-      currentAngularSpeed = sp / wheelRadiusPx;
+    if (wheelRadiusPx > 0 && transitionTimer >= 0.35) {
+      const revSp = speed(undefined, true);
+      currentAngularSpeed = (revSp / wheelRadiusPx) * 1.6;
       wheelAngle += currentAngularSpeed * dt;
       wheelRot = wheelAngle;
+      if (Math.random() < 0.25) spawnTireDust();
     }
+
     if (transitionTimer >= TITLE_CARD_DURATION) {
       st = 'play';
       hold = false;
       thrust = 0;
       levelRunTimer = 0;
+      cam = 0;
     }
   } else if (st === 'play') {
     levelRunTimer += dt;
@@ -10122,30 +10290,7 @@ function drawGameContent(dt = 0.016) {
   } else if (st === 'transition') {
     drawHUD();
     drawFloatingTexts();
-    let cardAlpha = 1;
-    if (transitionTimer < 0.35) cardAlpha = transitionTimer / 0.35;
-    else if (transitionTimer > 1.35) cardAlpha = Math.max(0, 1 - (transitionTimer - 1.35) / 0.4);
-
-    ctx.save();
-    ctx.globalAlpha = cardAlpha;
-    const cardText = getLevelTitleCardText(curLevel);
-    const ribbonW = 270;
-    drawRibbonHeader(W / 2, 210 + topInset * 0.5, ribbonW, 48, cardText, BUTTON_THEMES.blue, 2);
-
-    // New hazard introduction line (Requirement 7)
-    const stageNum = getStageNumber(curLevel);
-    const newHazardText = STAGE_NEW_HAZARDS[stageNum];
-    if (newHazardText && getLevelInStage(curLevel) === 1) {
-      drawGlossyText(newHazardText, W / 2, 252 + topInset * 0.5, 12.5, 'center', '#fde047', '#0f172a', 3.2);
-    }
-    ctx.restore();
-
-    if (transitionTimer < 0.25) {
-      ctx.save();
-      ctx.fillStyle = `rgba(0, 0, 0, ${Math.max(0, 1 - transitionTimer / 0.25)})`;
-      ctx.fillRect(0, 0, W, H);
-      ctx.restore();
-    }
+    drawStylishLevelTransition(transitionTimer);
 
   } else if (st === 'ready') {
     const menuAlpha = Math.min(1, menuFadeTimer / 0.3);
@@ -10370,11 +10515,8 @@ function handlePointerDown(e) {
       activePress = 'car_garage';
       return;
     }
-    startLevel(curLevel);
-    st = 'play';
-    hold = true;
     activePress = 'start_level';
-    playClickSound();
+    startLevelWithTransition(curLevel);
     return;
   }
 
@@ -10500,8 +10642,7 @@ function handlePointerUp(e) {
     } else if (activePress === 'try_again') {
       const restartLvl = RETRY_FROM_LEVEL_START ? curLevel : 1;
       curLevel = restartLvl;
-      startLevel(curLevel);
-      st = 'play';
+      startLevelWithTransition(curLevel);
       hold = false;
     } else if (activePress === 'close_dead') {
       const restartLvl = RETRY_FROM_LEVEL_START ? curLevel : 1;
@@ -10526,7 +10667,7 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
     ensureAudioContext();
     if (!e.repeat) {
-      if (st === 'ready') { startLevel(curLevel); st = 'play'; hold = true; }
+      if (st === 'ready') { startLevelWithTransition(curLevel); }
       else if (st === 'play') {
         if (!stopping && finishRunStage === 'none') {
           hold = true;
